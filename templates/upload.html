@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF to Image Converter</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    #drop-area {
+      border: 2px dashed #0d6efd;
+      border-radius: 10px;
+      padding: 30px;
+      text-align: center;
+      cursor: pointer;
+      background-color: #f8f9fa;
+      transition: background-color 0.3s;
+    }
+    #drop-area.hover {
+      background-color: #e2e6ea;
+    }
+    #loadingSection {
+      display: none;
+    }
+    .progress-bar {
+      transition: width 0.4s ease;
+    }
+    #toast-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 9999;
+    }
+    #themeToggle {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+    }
+  </style>
+</head>
+<body class="bg-light text-dark">
+<div class="container vh-100 d-flex align-items-center justify-content-center">
+  <div class="card shadow-lg p-4 text-center" style="width: 100%; max-width: 600px;">
+    <h2 class="mb-4">📄 ➡️ 🖼 PDF to Image</h2>
+
+    <!-- Drop Area -->
+    <form id="uploadForm" enctype="multipart/form-data">
+      <div id="drop-area">
+        <p class="lead mb-2">Drag & Drop your PDF here</p>
+        <p class="small text-muted">or click to browse</p>
+        <input type="file" id="fileElem" name="pdf" accept="application/pdf" style="display:none;" required>
+      </div>
+
+      <!-- Show uploaded filename -->
+      <div id="file-name" class="mt-3 text-success fw-bold"></div>
+
+      <!-- Image format selection -->
+      <div class="mt-3">
+        <label for="formatSelect" class="form-label">Select Output Format:</label>
+        <select id="formatSelect" class="form-select">
+          <option value="png" selected>PNG</option>
+          <option value="jpeg">JPEG</option>
+        </select>
+      </div>
+
+      <div class="d-grid mt-4">
+        <button type="submit" class="btn btn-primary">Convert and Download</button>
+      </div>
+    </form>
+
+    <!-- Loading Section -->
+    <div id="loadingSection">
+      <p class="mt-3">Uploading and Converting... Please wait</p>
+      <div class="progress" style="height: 20px;">
+        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;">0%</div>
+      </div>
+    </div>
+
+    <p class="text-muted mt-4">Files are auto-deleted after 24 hours.</p>
+  </div>
+</div>
+
+<!-- Theme toggle button -->
+<button id="themeToggle" class="btn btn-secondary">🌙 Dark Mode</button>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+  <script>
+    const dropArea = document.getElementById('drop-area');
+    const fileInput = document.getElementById('fileElem');
+    const form = document.getElementById('uploadForm');
+    const loadingSection = document.getElementById('loadingSection');
+    const progressBar = document.getElementById('progressBar');
+    const fileNameDiv = document.getElementById('file-name');
+    const toastContainer = document.getElementById('toast-container');
+    const formatSelect = document.getElementById('formatSelect');
+    const themeToggle = document.getElementById('themeToggle');
+
+    let isDark = false;
+
+    // Highlight drop area
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropArea.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropArea.classList.add('hover');
+      }, false);
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropArea.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropArea.classList.remove('hover');
+      }, false);
+    });
+
+    // Drop file
+    dropArea.addEventListener('drop', (e) => {
+      let files = e.dataTransfer.files;
+      if (files.length) {
+        const file = files[0];
+        if (file.type !== 'application/pdf') {
+          showToast('Only PDF files are allowed.', 'danger');
+          return;
+        }
+        fileInput.files = files;
+        fileNameDiv.textContent = `✅ Selected: ${file.name}`;
+      }
+    });
+
+    // Click to browse
+    dropArea.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    // Show file name and validate
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        if (file.type !== 'application/pdf') {
+          showToast('Only PDF files are allowed.', 'danger');
+          fileInput.value = '';
+          fileNameDiv.textContent = '';
+          return;
+        }
+        fileNameDiv.textContent = `✅ Selected: ${file.name}`;
+      }
+    });
+
+    // Theme toggle
+    themeToggle.addEventListener('click', () => {
+      document.body.classList.toggle('bg-light');
+      document.body.classList.toggle('bg-dark');
+      document.body.classList.toggle('text-light');
+      document.body.classList.toggle('text-dark');
+      isDark = !isDark;
+      themeToggle.innerHTML = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      if (fileInput.files.length === 0) {
+        showToast('Please select a PDF file.', 'danger');
+        return;
+      }
+
+      const file = fileInput.files[0];
+
+      if (file.type !== 'application/pdf') {
+        showToast('Only PDF files are allowed.', 'danger');
+        return;
+      }
+
+      if (file.size > 20 * 1024 * 1024) { // 20MB
+        showToast('File size exceeds 20MB limit.', 'danger');
+        return;
+      }
+
+      const serverOnline = await checkServerStatus();
+      if (!serverOnline) {
+        showToast('Server is offline. Please try later.', 'danger');
+        return;
+      }
+
+      form.style.display = 'none';
+      loadingSection.style.display = 'block';
+
+      let formData = new FormData();
+      formData.append('pdf', file);
+      formData.append('format', formatSelect.value);
+
+      let xhr = new XMLHttpRequest();
+      xhr.open('POST', '/', true);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          let percentComplete = Math.round((e.loaded / e.total) * 100);
+          progressBar.style.width = percentComplete + '%';
+          progressBar.innerText = percentComplete + '%';
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          const response = JSON.parse(xhr.responseText);
+          const downloadLink = response.download_link;
+          showToast('Upload successful! Ready to download.', 'success');
+
+          setTimeout(() => {
+            loadingSection.innerHTML = `
+              <a href="${downloadLink}" class="btn btn-success mt-4" download>📦 Download Your ZIP</a><br><br>
+              <button onclick="reloadPage()" class="btn btn-outline-primary">🔄 Convert Another File</button>
+            `;
+          }, 1000);
+        } else {
+          const error = JSON.parse(xhr.responseText)?.error || 'Upload failed. Please try again.';
+          showToast(error, 'danger');
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000);
+        }
+      };
+
+      xhr.onerror = () => {
+        showToast('Server error or timeout.', 'danger');
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      };
+
+      xhr.timeout = 15000;
+      xhr.ontimeout = () => {
+        showToast('Server timeout. Please try again.', 'danger');
+        window.location.reload();
+      };
+
+      xhr.send(formData);
+    });
+
+    function reloadPage() {
+      window.location.reload();
+    }
+
+    function showToast(message, type) {
+      const toast = document.createElement('div');
+      toast.className = `toast align-items-center text-bg-${type} border-0 show mb-2`;
+      toast.role = 'alert';
+      toast.innerHTML = `
+        <div class="d-flex">
+          <div class="toast-body">
+            ${message}
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close" onclick="this.parentElement.parentElement.remove()"></button>
+        </div>
+      `;
+      toastContainer.appendChild(toast);
+      setTimeout(() => {
+        toast.remove();
+      }, 4000);
+    }
+
+    async function checkServerStatus() {
+      try {
+        const response = await fetch('/status');
+        return response.ok;
+      } catch (err) {
+        return false;
+      }
+    }
+  </script>
+
+</body>
+</html>
